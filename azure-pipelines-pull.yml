@@ -1,0 +1,23 @@
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: jfrog-vars
+
+steps:
+- script: |
+    echo "$(JFROG_TOKEN)" | docker login $(JFROG_URL) -u $(JFROG_USER) --password-stdin
+    export IMG=$(JFROG_URL)/docker-trial TAG=released
+    docker compose -f docker-compose.ci.yml pull
+    docker compose -f docker-compose.ci.yml up -d
+    curl -sf --retry 10 --retry-delay 2 --retry-connrefused http://localhost:8000/health
+    echo
+    curl -s -X POST http://localhost:8002/cart/maya/add/p3/2
+    curl -s -X POST http://localhost:8002/cart/maya/add/p2/4
+    echo
+    curl -s http://localhost:8000/checkout/maya || { docker compose -f docker-compose.ci.yml logs; exit 1; }
+    echo
+    curl -s http://localhost:8000/checkout/nobody
+  displayName: PULL released images and run the store

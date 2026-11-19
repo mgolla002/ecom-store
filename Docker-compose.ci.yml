@@ -1,0 +1,14 @@
+services:
+  catalog:
+    image: ${IMG}/ecom-catalog:${TAG}
+    ports: ["8001:8000"]
+  cart:
+    image: ${IMG}/ecom-cart:${TAG}
+    ports: ["8002:8000"]
+  checkout:
+    image: ${IMG}/ecom-checkout:${TAG}
+    environment:
+      CATALOG_URL: http://catalog:8000
+      CART_URL: http://cart:8000
+    ports: ["8000:8000"]
+    depends_on: [catalog, cart]

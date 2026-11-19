@@ -1,0 +1,116 @@
+trigger:
+  branches:
+    include: [ main ]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: jfrog-vars
+  - name: img
+    value: $(JFROG_URL)/docker-trial
+
+stages:
+# 1. Test; dependencies come through JFrog
+- stage: Build
+  jobs:
+  - job: BuildTest
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.12'
+    - script: |
+        ENC_USER=$(python -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$(JFROG_USER)")
+        mkdir -p ~/.config/pip
+        printf "[global]\nindex-url = https://%s:$(JFROG_TOKEN)@$(JFROG_URL)/artifactory/api/pypi/pypi-virtual/simple\n" "$ENC_USER" > ~/.config/pip/pip.conf
+      displayName: Point pip at JFrog
+    - script: pip install -r requirements-dev.txt
+      displayName: Install dependencies through JFrog
+    - script: pytest -q
+      displayName: Run tests
+    - script: |
+        mkdir -p wheels
+        pip download -r requirements.txt -d wheels
+        ls wheels
+      displayName: Collect wheels for the images
+    - publish: wheels
+      artifact: wheels
+
+# 2. Three images in parallel; the base image comes from docker-remote
+- stage: Images
+  dependsOn: Build
+  jobs:
+  - job: BuildImage
+    strategy:
+      matrix:
+        catalog:
+          svc: catalog
+        cart:
+          svc: cart
+        checkout:
+          svc: checkout
+    steps:
+    - download: current
+      artifact: wheels
+    - script: |
+        cp -r $(Pipeline.Workspace)/wheels ./wheels
+        echo "$(JFROG_TOKEN)" | docker login $(JFROG_URL) -u $(JFROG_USER) --password-stdin
+        docker build \
+          --build-arg BASE=$(JFROG_URL)/docker-remote/python:3.12-slim \
+          --build-arg SERVICE=$(svc) \
+          --build-arg BUILD_NUMBER=$(Build.BuildId) \
+          -t $(img)/ecom-$(svc):$(Build.BuildId) .
+        docker push $(img)/ecom-$(svc):$(Build.BuildId)
+      displayName: Build from JFrog base image and PUSH ecom-$(svc)
+
+# 3. Run all three together
+- stage: Integration
+  dependsOn: Images
+  jobs:
+  - job: Compose
+    steps:
+    - script: |
+        echo "$(JFROG_TOKEN)" | docker login $(JFROG_URL) -u $(JFROG_USER) --password-stdin
+        export IMG=$(img) TAG=$(Build.BuildId)
+        docker compose -f docker-compose.ci.yml pull
+        docker compose -f docker-compose.ci.yml up -d
+        curl -sf --retry 10 --retry-delay 2 --retry-connrefused http://localhost:8000/health
+        echo
+        curl -s -X POST http://localhost:8002/cart/ana/add/p1/1
+        curl -s -X POST http://localhost:8002/cart/ana/add/p2/2
+        echo
+        curl -s http://localhost:8000/checkout/ana | tee result.json
+        grep 1045 result.json || { docker compose -f docker-compose.ci.yml logs; exit 1; }
+      displayName: Add to cart, then checkout across 3 containers
+
+# 4. Release only what passed
+- stage: Release
+  dependsOn: Integration
+  condition: succeeded()
+  jobs:
+  - job: Release
+    steps:
+    - script: |
+        curl -fL https://install-cli.jfrog.io | sh
+        jf config add trial --url=https://$(JFROG_URL) --user=$(JFROG_USER) --access-token=$(JFROG_TOKEN) --interactive=false
+        echo "$(JFROG_TOKEN)" | docker login $(JFROG_URL) -u $(JFROG_USER) --password-stdin
+        echo "{" > manifest.json
+        echo "  \"build\": \"$(Build.BuildId)\", \"commit\": \"$(Build.SourceVersion)\"," >> manifest.json
+        echo "  \"images\": {" >> manifest.json
+        for s in catalog cart checkout; do
+          docker pull $(img)/ecom-$s:$(Build.BuildId)
+          docker tag  $(img)/ecom-$s:$(Build.BuildId) $(img)/ecom-$s:released
+          docker push $(img)/ecom-$s:released
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $(img)/ecom-$s:$(Build.BuildId))
+          echo "    \"$s\": \"$DIGEST\"," >> manifest.json
+        done
+        echo "    \"done\": true" >> manifest.json
+        echo "  }" >> manifest.json
+        echo "}" >> manifest.json
+        cat manifest.json
+        jf rt upload manifest.json "generic-local/ecom-store/$(Build.BuildId)/" --flat=true \
+          --build-name=ecom-store --build-number=$(Build.BuildId) \
+          --target-props="build=$(Build.BuildId);status=released"
+        jf rt build-collect-env ecom-store $(Build.BuildId)
+        jf rt build-publish ecom-store $(Build.BuildId)
+      displayName: Tag released and publish ecom-store build record
