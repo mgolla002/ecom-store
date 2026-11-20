@@ -79,8 +79,9 @@ stages:
         curl -s -X POST http://localhost:8002/cart/ana/add/p1/1
         curl -s -X POST http://localhost:8002/cart/ana/add/p2/2
         echo
-        curl -s http://localhost:8000/checkout/ana | tee result.json
-        grep 1045 result.json || { docker compose -f docker-compose.ci.yml logs; exit 1; }
+        curl -s -i http://localhost:8000/checkout/ana | tee result.json
+        echo
+        grep 1045 result.json || { echo "--- compose logs ---"; docker compose -f docker-compose.ci.yml logs; exit 1; }
       displayName: Add to cart, then checkout across 3 containers
 
 # 4. Release only what passed
