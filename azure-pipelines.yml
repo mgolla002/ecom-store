@@ -70,18 +70,18 @@ stages:
   - job: Compose
     steps:
     - script: |
-        echo "$(JFROG_TOKEN)" | docker login $(JFROG_URL) -u $(JFROG_USER) --password-stdin
-        export IMG=$(img) TAG=$(Build.BuildId)
-        docker compose -f docker-compose.ci.yml pull
-        docker compose -f docker-compose.ci.yml up -d
-        curl -sf --retry 10 --retry-delay 2 --retry-connrefused http://localhost:8000/health
-        echo
-        curl -s -X POST http://localhost:8002/cart/ana/add/p1/1
-        curl -s -X POST http://localhost:8002/cart/ana/add/p2/2
-        echo
-        curl -s -i http://localhost:8000/checkout/ana | tee result.json
-        echo
-        grep 1045 result.json || { echo "--- compose logs ---"; docker compose -f docker-compose.ci.yml logs; exit 1; }
+       echo "$(JFROG_TOKEN)" | docker login $(JFROG_URL) -u $(JFROG_USER) --password-stdin
+       export IMG=$(img) TAG=$(Build.BuildId)
+       docker compose -f docker-compose.ci.yml pull
+       docker compose -f docker-compose.ci.yml up -d
+       sleep 15
+       docker compose -f docker-compose.ci.yml ps
+       curl -s -i --max-time 20 http://localhost:8080/health; echo "health exit: $?"
+       curl -s -X POST http://localhost:8002/cart/ana/add/p1/1
+       curl -s -X POST http://localhost:8002/cart/ana/add/p2/2
+       echo
+       curl -s -i --max-time 20 http://localhost:8080/checkout/ana | tee result.json; echo "checkout exit: $?"
+       grep 1045 result.json || { docker compose -f docker-compose.ci.yml logs; exit 1; }
       displayName: Add to cart, then checkout across 3 containers
 
 # 4. Release only what passed

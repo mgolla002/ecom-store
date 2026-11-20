@@ -10,5 +10,5 @@ services:
     environment:
       CATALOG_URL: http://catalog:8000
       CART_URL: http://cart:8000
-    ports: ["8000:8000"]
+    ports: ["8080:8000"]
     depends_on: [catalog, cart]

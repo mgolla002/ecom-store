@@ -17,7 +17,7 @@ steps:
     curl -s -X POST http://localhost:8002/cart/maya/add/p3/2
     curl -s -X POST http://localhost:8002/cart/maya/add/p2/4
     echo
-    curl -s http://localhost:8000/checkout/maya || { docker compose -f docker-compose.ci.yml logs; exit 1; }
+    curl -s http://localhost:8080/checkout/maya || { docker compose -f docker-compose.ci.yml logs; exit 1; }
     echo
-    curl -s http://localhost:8000/checkout/nobody
+    curl -s http://localhost:8080/checkout/nobody
   displayName: PULL released images and run the store
